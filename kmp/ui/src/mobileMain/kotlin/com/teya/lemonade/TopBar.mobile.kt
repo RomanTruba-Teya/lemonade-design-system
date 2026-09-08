@@ -38,7 +38,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -92,24 +91,12 @@ public class TopBarState internal constructor(
         startCollapsed && lockGestureAnimation
     }
 
-    private var scrollOffsetAnimatable by mutableStateOf(Animatable(initialValue = 0f))
+    private val collapseFraction = Animatable(if (startCollapsed) 1f else 0f)
 
     internal val scrollOffset: Float
-        get() = scrollOffsetAnimatable.value
+        get() = collapseFraction.value * maxScrollOffset
 
-    private var maxScrollOffsetPx: Float by mutableFloatStateOf(0f)
-
-    internal var maxScrollOffset: Float
-        get() = maxScrollOffsetPx
-        set(value) {
-            // Written from the measure policy: compare without registering a read, or measure
-            // would observe its own write.
-            if (Snapshot.withoutReadObservation { maxScrollOffsetPx } == value) return
-            maxScrollOffsetPx = value
-            if (startCollapsed) {
-                scrollOffsetAnimatable = Animatable(initialValue = value)
-            }
-        }
+    internal var maxScrollOffset: Float by mutableFloatStateOf(0f)
 
     private var scrolledOffsetPx: Float by mutableFloatStateOf(0f)
 
@@ -130,14 +117,10 @@ public class TopBarState internal constructor(
      * and this layer applies that node's shape and clip.
      */
     internal val currentCollapseProgress: Float
-        get() = if (maxScrollOffset > 0f) {
-            (scrollOffset / maxScrollOffset).coerceIn(
-                minimumValue = 0f,
-                maximumValue = 1f,
-            )
-        } else {
-            0f
-        }
+        get() = collapseFraction.value.coerceIn(
+            minimumValue = 0f,
+            maximumValue = 1f,
+        )
 
     /**
      * `true` when the scrollable content has moved off its top.
@@ -161,10 +144,10 @@ public class TopBarState internal constructor(
      * @param animationSpec animation to run. Defaults to a 300ms tween
      */
     public fun collapse(animationSpec: AnimationSpec<Float> = tween(durationMillis = 300)) {
-        if (scrollOffset < maxScrollOffset) {
+        if (collapseFraction.value < 1f) {
             coroutineScope.launch {
-                scrollOffsetAnimatable.animateTo(
-                    targetValue = maxScrollOffset,
+                collapseFraction.animateTo(
+                    targetValue = 1f,
                     animationSpec = animationSpec,
                 )
             }
@@ -178,9 +161,9 @@ public class TopBarState internal constructor(
      * @param animationSpec animation to run. Defaults to a 300ms tween
      */
     public fun expand(animationSpec: AnimationSpec<Float> = tween(durationMillis = 300)) {
-        if (scrollOffset > 0f) {
+        if (collapseFraction.value > 0f) {
             coroutineScope.launch {
-                scrollOffsetAnimatable.animateTo(
+                collapseFraction.animateTo(
                     targetValue = 0f,
                     animationSpec = animationSpec,
                 )
@@ -241,7 +224,7 @@ public class TopBarState internal constructor(
                     maximumValue = maxScrollOffset,
                 )
                 coroutineScope.launch {
-                    scrollOffsetAnimatable.snapTo(targetValue = targetOffset)
+                    collapseFraction.snapTo(targetValue = targetOffset.asCollapseFraction())
                 }
                 return Offset(
                     x = 0f,
@@ -277,7 +260,7 @@ public class TopBarState internal constructor(
                     maximumValue = maxScrollOffset,
                 )
                 coroutineScope.launch {
-                    scrollOffsetAnimatable.snapTo(targetValue = targetOffset)
+                    collapseFraction.snapTo(targetValue = targetOffset.asCollapseFraction())
                 }
                 return Offset(
                     x = 0f,
@@ -292,6 +275,9 @@ public class TopBarState internal constructor(
         if (deltaY == 0f) return
         scrolledOffsetPx = (scrolledOffsetPx - deltaY).coerceAtLeast(minimumValue = 0f)
     }
+
+    /** Gestures arrive in pixels; the bar holds its position as a fraction of the collapsable height. */
+    private fun Float.asCollapseFraction(): Float = if (maxScrollOffset > 0f) this / maxScrollOffset else 0f
 }
 
 // Slow enough that a high-contrast transition (Color.Transparent to bgDefault on a details screen)
