@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -91,19 +92,24 @@ public class TopBarState internal constructor(
         startCollapsed && lockGestureAnimation
     }
 
-    private val scrollOffsetAnimatable by derivedStateOf {
-        Animatable(
-            initialValue = if (startCollapsed) {
-                maxScrollOffset
-            } else {
-                0f
-            },
-        )
-    }
+    private var scrollOffsetAnimatable by mutableStateOf(Animatable(initialValue = 0f))
 
     internal val scrollOffset: Float
         get() = scrollOffsetAnimatable.value
-    internal var maxScrollOffset: Float by mutableFloatStateOf(0f)
+
+    private var maxScrollOffsetPx: Float by mutableFloatStateOf(0f)
+
+    internal var maxScrollOffset: Float
+        get() = maxScrollOffsetPx
+        set(value) {
+            // Written from the measure policy: compare without registering a read, or measure
+            // would observe its own write.
+            if (Snapshot.withoutReadObservation { maxScrollOffsetPx } == value) return
+            maxScrollOffsetPx = value
+            if (startCollapsed) {
+                scrollOffsetAnimatable = Animatable(initialValue = value)
+            }
+        }
 
     private var scrolledOffsetPx: Float by mutableFloatStateOf(0f)
 
@@ -114,7 +120,17 @@ public class TopBarState internal constructor(
 
     /** Collapse progress from `0f` (fully expanded) to `1f` (fully collapsed). */
     public val collapseProgress: Float by derivedStateOf {
-        if (maxScrollOffset > 0f) {
+        currentCollapseProgress
+    }
+
+    /**
+     * [collapseProgress] computed from plain state, for the layout and graphics-layer phases. A
+     * `derivedStateOf` that recalculates inside a `graphicsLayer` block delivers pending snapshot
+     * notifications mid-block, so another node's layer update can overwrite the shared layer scope
+     * and this layer applies that node's shape and clip.
+     */
+    internal val currentCollapseProgress: Float
+        get() = if (maxScrollOffset > 0f) {
             (scrollOffset / maxScrollOffset).coerceIn(
                 minimumValue = 0f,
                 maximumValue = 1f,
@@ -122,7 +138,6 @@ public class TopBarState internal constructor(
         } else {
             0f
         }
-    }
 
     /**
      * `true` when the scrollable content has moved off its top.
@@ -136,9 +151,8 @@ public class TopBarState internal constructor(
         scrolledOffsetPx > 0f
     }
 
-    internal val heightOffset: Float by derivedStateOf {
-        -scrollOffset
-    }
+    internal val heightOffset: Float
+        get() = -scrollOffset
 
     /**
      * Animates the top bar to the fully collapsed state.
@@ -1061,8 +1075,9 @@ internal fun TopBarLayout(
                     // alpha-stack over the root background and desync the fade above/below it.
                     .clipToBounds()
                     .graphicsLayer {
+                        // Plain-state reads only — see TopBarState.currentCollapseProgress.
                         translationY = state.heightOffset
-                        alpha = 1f - state.collapseProgress
+                        alpha = 1f - state.currentCollapseProgress
                     },
             )
 
