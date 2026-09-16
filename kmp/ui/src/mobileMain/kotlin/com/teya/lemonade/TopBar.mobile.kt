@@ -20,15 +20,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.displayCutoutPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.requiredSizeIn
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
@@ -987,7 +991,11 @@ private fun CoreTopBar(
             .clipToBounds()
             .then(other = modifier)
             .background(color = backgroundColor)
-            .displayCutoutPadding()
+            // Only the cutout above and beside the bar: a device turned with its camera at the bottom
+            // edge reports the cutout there, and padding it would grow the bar below its content.
+            .windowInsetsPadding(
+                insets = WindowInsets.displayCutout.only(sides = WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+            )
             .statusBarsPadding(),
         fixedHeaderSlot = fixedHeaderSlot,
         collapsableSlot = collapsableSlot,
