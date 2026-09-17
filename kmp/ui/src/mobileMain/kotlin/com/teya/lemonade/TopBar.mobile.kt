@@ -985,17 +985,16 @@ private fun CoreTopBar(
     bottomSlot: @Composable (BoxScope.() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
+    // A device turned with its camera at the bottom edge reports the cutout there, and padding it
+    // would grow the bar below its content.
+    val cutoutAboveAndBeside = WindowInsets.displayCutout.only(sides = WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
     TopBarLayout(
         state = state,
         modifier = Modifier
             .clipToBounds()
             .then(other = modifier)
             .background(color = backgroundColor)
-            // Only the cutout above and beside the bar: a device turned with its camera at the bottom
-            // edge reports the cutout there, and padding it would grow the bar below its content.
-            .windowInsetsPadding(
-                insets = WindowInsets.displayCutout.only(sides = WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
-            )
+            .windowInsetsPadding(insets = cutoutAboveAndBeside)
             .statusBarsPadding(),
         fixedHeaderSlot = fixedHeaderSlot,
         collapsableSlot = collapsableSlot,
