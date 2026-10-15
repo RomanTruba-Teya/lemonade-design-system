@@ -14,6 +14,9 @@ const web = join(repo, 'web')
 
 const TEXT = 'Pay "now" & <later>'
 
+/** The glyph the instance-swap stub reports, and what a template reading it must emit. */
+const GLYPH = 'arrow-right'
+
 /** Figma's `figma.code` tagged template, reduced to the string it would produce. */
 const tag = (strings, ...values) =>
   Object.assign(new String(strings.reduce((o, s, i) => o + s + (i < values.length ? String(values[i]) : ''), '')), {
@@ -32,6 +35,11 @@ function combinations(source) {
     keys: [...body.matchAll(/(?:'([^']+)'|(\w+)):/g)].map((m) => m[1] ?? m[2]),
   }))
   const booleans = [...source.matchAll(/getBoolean\('([^']+)'\)/g)].map(([, name]) => ({ name, keys: [true, false] }))
+  // A template that resolves a swapped asset has two branches, and the one where Figma
+  // gives it nothing is the one a developer only sees when something is already wrong.
+  if (source.includes('getInstanceSwap')) {
+    enums.push({ name: '__unresolved', keys: [false, true] })
+  }
   return [...enums, ...booleans].reduce(
     (rows, { name, keys }) => rows.flatMap((row) => keys.map((key) => ({ ...row, [name]: key }))),
     [{}],
@@ -50,6 +58,10 @@ function render(source, props) {
     },
     getBoolean: (name) => props[name] === true,
     getSlot: () => undefined,
+    // A swapped asset, named the way Figma names its icon components. Deliberately not the
+    // template's own fallback: if reading the name broke, the fallback would still be a
+    // valid IconName and tsc would pass, so the two are forced apart and checked below.
+    getInstanceSwap: () => (props.__unresolved ? null : { type: 'INSTANCE', name: GLYPH }),
   }
   const body = `const figma = arguments[0];\n${source}\nreturn globalThis.__result`
   // eslint-disable-next-line no-new-func
@@ -111,7 +123,25 @@ try {
       )
       .join('\n')
 
-    const cases = combinations(raw).map((props, index) => `export const case${index} = (\n${render(source, props)}\n)`)
+    const renderings = combinations(raw).map((props) => ({ props, snippet: render(source, props) }))
+    const rendered = renderings.map(({ snippet }) => snippet)
+
+    // tsc cannot tell a glyph that was read from one that fell back, because both are valid
+    // icon names. Every combination where the stub *did* resolve has to name it — checking
+    // that merely one of them does would pass a template that resolves only by accident.
+    const resolved = renderings.filter(({ props }) => props.__unresolved === false)
+    const silent = resolved.find(({ snippet }) => !snippet.includes(GLYPH))
+    if (raw.includes('getInstanceSwap') && (resolved.length === 0 || silent)) {
+      console.error(
+        `${relative(root, template)} reads the swapped asset but does not emit it.\n` +
+          (resolved.length === 0
+            ? 'No combination exercised a resolved swap, so the read was never checked.'
+            : `Expected "${GLYPH}" in every resolved snippet; got:\n  ${silent.snippet}`),
+      )
+      process.exit(1)
+    }
+
+    const cases = rendered.map((snippet, index) => `export const case${index} = (\n${snippet}\n)`)
     total += cases.length
     const file = join(scratch, `${relative(root, template).replace(/[/\\.]/g, '_')}.tsx`)
     writeFileSync(file, `${header}\n\n${cases.join('\n\n')}\n`)
