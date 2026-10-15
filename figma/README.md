@@ -1,22 +1,24 @@
 # Figma Code Connect
 
-Maps Lemonade Figma components to their call sites on **both platforms**, so Figma
-Dev Mode and MCP-driven agents emit real `LemonadeUi.*` code instead of raw layer
-output. One Figma component, two labels: `Compose` and `SwiftUI`.
+Maps Lemonade Figma components to their call sites, so Figma Dev Mode and MCP-driven
+agents emit real Lemonade code instead of raw layer output. One Figma component, three
+labels: `Compose`, `SwiftUI` and `React`.
 
 ## Layout
 
 ```
-figma.compose.config.json   label "Compose", language "kotlin", reads connect/
-figma.swiftui.config.json   label "SwiftUI", language "swift",  reads connect-swiftui/
-icons.manifest.json         Figma icon name -> node id        (shared by both platforms)
-flags.manifest.json         Figma flag name -> node id        (shared by both platforms)
-brand-logos.manifest.json   Figma brand logo name -> node id  (shared by both platforms)
+figma.compose.config.json   label "Compose", language "kotlin",     reads connect/
+figma.swiftui.config.json   label "SwiftUI", language "swift",      reads connect-swiftui/
+figma.react.config.json     label "React",   language "typescript", reads connect-react/
+icons.manifest.json         Figma icon name -> node id        (Compose and SwiftUI)
+flags.manifest.json         Figma flag name -> node id        (Compose and SwiftUI)
+brand-logos.manifest.json   Figma brand logo name -> node id  (Compose and SwiftUI)
 connect/                    Compose templates
 connect-swiftui/            SwiftUI templates
   icons/                    GENERATED — do not edit
   flags/                    GENERATED — do not edit
   brand-logos/              GENERATED — do not edit
+connect-react/              React templates
 shared/                     helpers templates import: slots, time pickers, bottom sheets
 scripts/generate-asset-templates.mjs
 ```
@@ -59,12 +61,25 @@ themselves.
 Each label is published separately from its own config, which is the structure
 Figma documents for multi-framework repos.
 
-**Neither config is named `figma.config.json` on purpose.** That is the CLI's
+The `React` label reads `connect-react/` and emits TypeScript, written the same way as the
+other two: Code Connect v2 dropped the framework-specific parsers, so React is not a native
+parser here either — every label is `parser: "html"` with tagged templates.
+
+Web has no asset templates: an icon reaches a React call site as a `--lmnd-icon` URL
+rather than an enum entry, so there is nothing to map one-to-one.
+
+`validate:react` is separate from `validate` because a config whose glob matches no
+templates is an error, so folding it in would break the combined check whenever
+`connect-react/` is empty.
+
+**No config is named `figma.config.json` on purpose.** That is the CLI's
 default filename, so a bare `figma connect publish` would silently publish just
 that one platform and report success. Always pass `--config`.
 
-Templates are **parserless** — they emit Kotlin or Swift as strings via
-`` figma.kotlin`...` `` / `` figma.swift`...` ``. Nothing is added to `kmp/ui` or
+Templates are **parserless** — they emit Kotlin, Swift or TypeScript as strings via a
+tagged template. The pinned CLI exposes `code`, `html`, `kotlin`, `swift` and `tsx`; there
+is no `typescript`, and an undefined tag throws inside Figma, which publishes as an empty
+snippet rather than failing the upload. React uses `` figma.code`...` ``. Nothing is added to `kmp/ui` or
 `swiftui/Sources`, so this has no effect on either published API surface or the
 Binary Compatibility Validator baseline.
 
@@ -117,9 +132,10 @@ a platform's components without its assets — Figma resolves a nested icon by
 node, and a label with no template for that node falls back to another label's,
 so a missing SwiftUI icon renders the *Kotlin* snippet inside a Swift call.
 
-The components file also carries a `React` label published from outside this
-repo. Labels are independent namespaces; publishing these two does not touch
-it.
+Labels are independent namespaces, so publishing `React` from here owns that label
+outright, replacing any mapping another repo set. That is intended: the web components
+live here now. Until a template exists under `connect-react/`, the config matches
+nothing and `publish:react` errors rather than publishing an empty label.
 
 ## A note on auditing coverage
 
