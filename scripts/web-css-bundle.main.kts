@@ -36,8 +36,15 @@ fun main() {
         require(File(it).isFile) { "$it is missing — run the converters first" }
     }
 
-    /** Each part carries its own banner or explanatory comment; one header per file is enough. */
-    fun body(path: String) = File(path).readText().substringAfter("*/").trim()
+    /**
+     * One header per generated file is enough, so a part's own opening banner is dropped.
+     * Only a banner: a stylesheet may open with a rule and explain something further down,
+     * and cutting at the first close-comment would drop every rule above it.
+     */
+    fun body(path: String): String {
+        val text = File(path).readText().trim()
+        return if (text.startsWith("/*")) text.substringAfter("*/").trim() else text
+    }
 
     val components = buildString {
         appendLine("/* Lemonade Design System — every component's classes.")
