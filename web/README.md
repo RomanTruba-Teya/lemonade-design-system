@@ -19,7 +19,7 @@ import '@teya/lemonade-mobile-ds/fonts.css'       // Figtree, self-hosted (opt-i
 Or take the first two together, and add fonts if you want the bundled typeface:
 
 ```js
-import '@teya/lemonade-mobile-ds/styles.css'      // tokens + typography
+import '@teya/lemonade-mobile-ds/styles.css'      // tokens, typography, components
 import '@teya/lemonade-mobile-ds/fonts.css'
 ```
 
@@ -36,15 +36,17 @@ The CSS carries the component and React only applies the class names, so the cla
 the API:
 
 ```jsx
-import { Icon, Text } from '@teya/lemonade-mobile-ds/react'
+import { Icon, Spinner, Text } from '@teya/lemonade-mobile-ds/react'
 
 <Text textStyle="bodyMediumRegular" as="p">Account balance</Text>
 <Icon use="heart" size="large" contentDescription="Favourite" />
+<Spinner contentDescription="Loading your balance" />
 ```
 
 The components import no CSS of their own — `sideEffects` keeps a bundler from dropping a
-bare stylesheet import, and which sheets you take stays your choice — so `icon.css` has to
-be imported alongside `styles.css` or the icon renders at the wrong size with no mask.
+bare stylesheet import, and which sheets you take stays your choice — so take `styles.css`,
+which carries the tokens, the type scale and every component's classes. Importing the
+individual files instead means adding `components.css` to them.
 
 Icons are CSS masks, so they take their colour from `currentColor` and need the SVGs
 served: copy `dist/assets/icons` to `/assets/icons`, or point `basePath` elsewhere. A
@@ -69,9 +71,9 @@ the tokens alone pulls in neither.
 |---|---|
 | `@teya/lemonade-mobile-ds` | Typed tokens, text styles and asset manifests |
 | `@teya/lemonade-mobile-ds/react` | The React components. Needs React, which is an optional peer |
-| `@teya/lemonade-mobile-ds/styles.css` | Barrel: tokens + typography |
+| `@teya/lemonade-mobile-ds/styles.css` | Barrel: tokens, typography and every component's classes |
 | `@teya/lemonade-mobile-ds/fonts.css` | Figtree `@font-face` declarations |
-| `@teya/lemonade-mobile-ds/icon.css` | The `.lmnd-icon` mask utility |
+| `@teya/lemonade-mobile-ds/components.css` | Every component's classes, including the `.lmnd-icon` mask utility |
 | `@teya/lemonade-mobile-ds/lemonade.css` | Everything in one self-contained file, for prototypes |
 | `@teya/lemonade-mobile-ds/llms.txt` | Token reference for AI tools |
 | `@teya/lemonade-mobile-ds/icons/*.svg` | 295 icons, `currentColor` |
