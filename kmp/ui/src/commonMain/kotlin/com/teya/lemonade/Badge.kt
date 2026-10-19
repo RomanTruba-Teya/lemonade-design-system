@@ -14,8 +14,6 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.layout.FirstBaseline
-import androidx.compose.ui.layout.LastBaseline
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.text.TextStyle
@@ -168,18 +166,9 @@ internal fun LemonadeBadgeBox(
                 .fastFirst { measurable -> measurable.layoutId == "anchor" }
                 .measure(constraints = constraints)
 
-            val firstBaseline = anchorPlaceable[FirstBaseline]
-            val lastBaseline = anchorPlaceable[LastBaseline]
-            val totalWidth = anchorPlaceable.width
-            val totalHeight = anchorPlaceable.height
-
             layout(
-                width = totalWidth,
-                height = totalHeight,
-                alignmentLines = mapOf(
-                    FirstBaseline to firstBaseline,
-                    LastBaseline to lastBaseline,
-                ),
+                width = anchorPlaceable.width,
+                height = anchorPlaceable.height,
             ) {
                 val badgeOffset = badgeOffset(
                     IntSize(
