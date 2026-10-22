@@ -2,9 +2,15 @@ import SwiftUI
 import Lemonade
 
 struct HistoryTimelineDisplayView: View {
+    @State private var variant: LemonadeHistoryTimelineVariant = .steps
+
     var body: some View {
         ScrollView(.vertical) {
             LazyVStack(spacing: .space.spacing400) {
+                variantPicker
+                ForEach(StepsSample.all, id: \.title) { sample in
+                    stepsCard(sample)
+                }
                 positiveFirstSection
                 howItWorksSection
                 criticalCurrentSection
@@ -132,10 +138,96 @@ struct HistoryTimelineDisplayView: View {
             )
         }
     }
+
+    private var variantPicker: some View {
+        LemonadeUi.SegmentedControl(
+            properties: [.label("Events"), .label("Steps")],
+            selectedTab: variant == .events ? 0 : 1,
+            onTabSelected: { variant = $0 == 0 ? .events : .steps }
+        )
+    }
+
+    private func stepsCard(_ sample: StepsSample) -> some View {
+        LemonadeUi.Card(
+            contentPadding: .medium,
+            header: CardHeaderConfig(title: sample.title)
+        ) {
+            LemonadeUi.HistoryTimeline(
+                items: sample.items,
+                currentIndex: sample.currentIndex,
+                variant: variant
+            )
+        }
+    }
 }
 
 #Preview {
     NavigationStack {
         HistoryTimelineDisplayView()
+    }
+}
+
+private struct StepsSample {
+    let title: String
+    let currentIndex: Int?
+    let items: [LemonadeHistoryTimelineItem]
+
+    static let all: [StepsSample] = [
+        StepsSample(
+            title: "Steps — first step",
+            currentIndex: 0,
+            items: steps(completed: 0, currentSubheading: "An activation email was sent to sofia@teya.com")
+        ),
+        StepsSample(
+            title: "Steps — second step",
+            currentIndex: 1,
+            items: steps(completed: 1, currentSubheading: "Sofia needs to download the Teya app and log in.")
+        ),
+        StepsSample(
+            title: "Steps — last step",
+            currentIndex: 2,
+            items: steps(completed: 2, currentSubheading: "The card was delivered. Sofia can now activate it.")
+        ),
+        StepsSample(title: "Steps — all steps completed", currentIndex: 3, items: steps(completed: 3)),
+        StepsSample(
+            title: "Steps — critical current step",
+            currentIndex: 1,
+            items: steps(
+                completed: 1,
+                currentSubheading: "We couldn't verify Sofia's phone number.",
+                currentVoice: .critical
+            )
+        ),
+        StepsSample(
+            title: "Steps — current step with an action",
+            currentIndex: 1,
+            items: [
+                LemonadeHistoryTimelineItem(label: "Invitation accepted", voice: .positive),
+                LemonadeHistoryTimelineItem(
+                    label: "Logs into the Teya App",
+                    description: "Remind Sofia to log in so the card can be activated."
+                ) {
+                    LemonadeUi.Button(label: "Resend invite", onClick: {}, variant: .secondary)
+                },
+                LemonadeHistoryTimelineItem(label: "Card activation")
+            ]
+        ),
+        StepsSample(title: "Steps — nothing reached", currentIndex: nil, items: steps(completed: 0))
+    ]
+
+    private static func steps(
+        completed: Int,
+        currentSubheading: String? = nil,
+        currentVoice: LemonadeHistoryItemVoice = .neutral
+    ) -> [LemonadeHistoryTimelineItem] {
+        ["Invitation accepted", "Logs into the Teya App", "Card activation"].enumerated().map { index, label in
+            if index < completed {
+                return LemonadeHistoryTimelineItem(label: label, voice: .positive)
+            } else if index == completed {
+                return LemonadeHistoryTimelineItem(label: label, subheading: currentSubheading, voice: currentVoice)
+            } else {
+                return LemonadeHistoryTimelineItem(label: label)
+            }
+        }
     }
 }
