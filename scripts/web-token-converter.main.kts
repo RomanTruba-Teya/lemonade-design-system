@@ -9,18 +9,25 @@ val SCRIPT_PATH = "scripts/web-token-converter.main.kts"
 
 data class CssVar(val name: String, val value: String)
 
+/**
+ * One theme-neutral token: its CSS custom property, where it sits in the JS exports, its
+ * `tokens` literal, and its `tokenValues` literal (null when it has no plain value).
+ */
+data class WebToken(val css: CssVar, val path: List<String>, val style: String, val value: String?)
+
 /** One scalar token collection and how its values become CSS. */
 private data class ScalarSource(
     val fileName: String,
     val category: String,
     val strip: String?,
     val format: (Double) -> String,
+    val plain: (Double) -> Double = { it },
+    val unitless: Boolean = false,
 )
 
-/** Opacity tokens are authored 0-100; CSS and the TS export both want 0-1. */
+/** Opacity tokens are authored 0-100; CSS and JS both want 0-1. */
 private fun opacityScalar(raw: Double): Double = raw / 100.0
 
-/** Opacity tokens are authored 0-100; CSS wants 0-1. */
 private fun opacityValue(raw: Double): String = trimNumber(opacityScalar(raw))
 
 private val SCALAR_SOURCES = listOf(
@@ -28,120 +35,29 @@ private val SCALAR_SOURCES = listOf(
     ScalarSource("radius.tokens.json", "radius", "radius", ::remValue),
     ScalarSource("size.tokens.json", "size", "size", ::remValue),
     ScalarSource("border-width.tokens.json", "border-width", "border", ::pxValue),
-    ScalarSource("opacity.tokens.json", "opacity", "opacity", ::opacityValue),
+    ScalarSource("opacity.tokens.json", "opacity", "opacity", ::opacityValue, ::opacityScalar, unitless = true),
 )
 
-fun scalarVars(): List<CssVar> {
-    val vars = mutableListOf<CssVar>()
+fun scalarTokens(): List<WebToken> {
+    val tokens = mutableListOf<WebToken>()
     SCALAR_SOURCES.forEach { source ->
         readFileResourceFileRaw(tokenFile(source.fileName)) { path, resolved ->
             val raw = resolved.get("resolvedValue")
             require(raw is Number) {
                 "${source.fileName}: token '$path' is ${raw::class.simpleName}, expected a number"
             }
-            vars.add(
-                CssVar(
-                    name = cssVar(source.category, leafOf(path), source.strip),
-                    value = source.format(raw.toDouble()),
+            val css = source.format(raw.toDouble())
+            tokens.add(
+                WebToken(
+                    css = CssVar(cssVar(source.category, leafOf(path), source.strip), css),
+                    path = listOf(camelCase(source.category), jsKey(leafOf(path), source.strip)),
+                    style = if (source.unitless) css else jsString(css),
+                    value = trimNumber(source.plain(raw.toDouble())),
                 )
             )
         }
     }
-    return vars
-}
-
-/**
- * TS object key for a scalar token: category + the leaf's distinguishing part,
- * camelCased. `("spacing", "spacing-200", "spacing")` -> `spacing200`;
- * `("border-width", "focus-ring", "border")` -> `borderWidthFocusRing`.
- *
- * The category is folded into the key (unlike the CSS custom property, which is
- * already namespaced by its selector) because Task 12's consumers read
- * `tokens.spacing.spacing200`, matching the cross-platform naming already used by
- * `LemonadeTheme.spaces.spacing0` in the Figma token metadata.
- */
-fun tsKey(category: String, leaf: String, strip: String?): String {
-    val trimmed = if (strip != null) leaf.removePrefix("$strip-") else leaf
-    return "$category-$trimmed".split("-").mapIndexed { index, word ->
-        if (index == 0) word else word.replaceFirstChar { it.uppercase() }
-    }.joinToString("")
-}
-
-/** `border-width` -> `borderWidth`, `spacing` -> `spacing`. */
-fun tsGroupName(category: String): String =
-    category.split("-").mapIndexed { index, word ->
-        if (index == 0) word else word.replaceFirstChar { it.uppercase() }
-    }.joinToString("")
-
-/**
- * The five scalar groups, keyed and valued for the TS/JSON exports.
- *
- * Unlike [scalarVars] the values here are raw numbers (px, or 0-1 for opacity),
- * not CSS-formatted rem/px strings: the TS export exists precisely so consumers
- * doing arithmetic get the source numbers, preserving parity with KMP and SwiftUI.
- */
-fun scalarEntries(): List<Triple<String, String, List<Pair<String, String>>>> {
-    return SCALAR_SOURCES.map { source ->
-        val entries = mutableListOf<Pair<String, String>>()
-        readFileResourceFileRaw(tokenFile(source.fileName)) { path, resolved ->
-            val raw = (resolved.get("resolvedValue") as Number).toDouble()
-            val value = if (source.category == "opacity") opacityScalar(raw) else raw
-            entries.add(tsKey(source.category, leafOf(path), source.strip) to trimNumber(value))
-        }
-        Triple(tsGroupName(source.category), "number", entries)
-    }
-}
-
-/** Writes web/src/tokens.generated.ts: a typed `tokens` object of the five scalar groups. */
-fun writeTokensTs(groups: List<Triple<String, String, List<Pair<String, String>>>>) {
-    // Triple is (tsGroupName, tsType, entries of key to literal)
-    val output = buildString {
-        appendLine("/**")
-        append(defaultAutoGenerationMessage(scriptFilePath = SCRIPT_PATH))
-        appendLine(" */")
-        appendLine()
-        appendLine("export const tokens = {")
-        groups.forEach { (name, _, entries) ->
-            appendLine("  $name: {")
-            entries.forEach { (key, literal) -> appendLine("    $key: $literal,") }
-            appendLine("  },")
-        }
-        appendLine("} as const")
-        appendLine()
-        appendLine("export type LemonadeTokens = typeof tokens")
-    }
-    val target = File("web/src/tokens.generated.ts")
-    target.parentFile.mkdirs()
-    target.writeText(output)
-    println("✓ web/src/tokens.generated.ts written")
-}
-
-/**
- * Serialises the same scalar groups as web/tokens.json, for non-TS consumers.
- *
- * Hand-emitted rather than routed through `org.json.JSONObject`: that type is
- * HashMap-backed and does not preserve insertion order, which would scramble
- * this committed file's key order independently of [scalarEntries] on every
- * regeneration. [literal] is already the trimmed numeric text (`8`, `1.5`,
- * `999`), so writing it verbatim also avoids a Double round-trip turning
- * integers into `8.0`.
- */
-fun buildJsonFromEntries(
-    groups: List<Triple<String, String, List<Pair<String, String>>>>,
-): String {
-    return buildString {
-        appendLine("{")
-        groups.forEachIndexed { groupIndex, (name, _, entries) ->
-            val groupComma = if (groupIndex == groups.lastIndex) "" else ","
-            appendLine("  \"$name\": {")
-            entries.forEachIndexed { entryIndex, (key, literal) ->
-                val entryComma = if (entryIndex == entries.lastIndex) "" else ","
-                appendLine("    \"$key\": $literal$entryComma")
-            }
-            appendLine("  }$groupComma")
-        }
-        appendLine("}")
-    }
+    return tokens
 }
 
 private val FONT_WEIGHTS = mapOf(
@@ -158,35 +74,33 @@ private val FONT_WEIGHTS = mapOf(
 private val FONT_STACK =
     "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif"
 
-fun typographyVars(): List<CssVar> {
-    val vars = mutableListOf<CssVar>()
+fun typographyTokens(): List<WebToken> {
+    val tokens = mutableListOf<WebToken>()
     readFileResourceFileRaw(tokenFile("typography.tokens.json")) { path, resolved ->
         val group = path.substringBefore('/')
         val leaf = leafOf(path)
         val raw = resolved.get("resolvedValue")
-        val declaration = when (group) {
-            "font-size" -> CssVar(
-                cssVar("font-size", leaf, "font-size"),
-                remValue((raw as Number).toDouble()),
-            )
-            "line-height" -> CssVar(
-                cssVar("line-height", leaf, "line-height"),
-                remValue((raw as Number).toDouble()),
-            )
-            "font-weight" -> CssVar(
-                cssVar("font-weight", leaf),
-                FONT_WEIGHTS[raw as String]
-                    ?: error("unmapped font weight '$raw' on '$path' — add it to FONT_WEIGHTS"),
-            )
-            "font-family" -> CssVar(
-                cssVar("font-family", leaf),
-                "\"$raw\", $FONT_STACK",
-            )
+        val token = when (group) {
+            "font-size", "line-height" -> {
+                val px = (raw as Number).toDouble()
+                val css = remValue(px)
+                val jsPath = if (group == "font-size") listOf("font", "size") else listOf("lineHeight")
+                WebToken(CssVar(cssVar(group, leaf, group), css), jsPath + jsKey(leaf, group), jsString(css), trimNumber(px))
+            }
+            "font-weight" -> {
+                val weight = FONT_WEIGHTS[raw as String]
+                    ?: error("unmapped font weight '$raw' on '$path' — add it to FONT_WEIGHTS")
+                WebToken(CssVar(cssVar(group, leaf), weight), listOf("font", "weight", jsKey(leaf, null)), weight, weight)
+            }
+            "font-family" -> {
+                val stack = "\"$raw\", $FONT_STACK"
+                WebToken(CssVar(cssVar(group, leaf), stack), listOf("font", "family", jsKey(leaf, null)), jsString(stack), jsString(stack))
+            }
             else -> error("unexpected typography group '$group' on token '$path'")
         }
-        vars.add(declaration)
+        tokens.add(token)
     }
-    return vars
+    return tokens
 }
 
 private val SHADOW_LEAF = Regex("""^sd-([a-z]+)-lv(\d+)-(.+)$""")
@@ -202,9 +116,9 @@ private val SHADOW_COLOUR_TOKEN = "Shadow/shadow-default"
  *
  * The colour is emitted as var(--lmnd-color-shadow-default) rather than its resolved
  * value, because that token differs between themes. Referencing the variable makes
- * shadows theme-reactive for free.
+ * shadows theme-reactive for free. A composed shadow has no plain value for `tokenValues`.
  */
-fun shadowVars(): List<CssVar> {
+fun shadowTokens(): List<WebToken> {
     // size -> level -> part -> value
     val parts = sortedMapOf<String, MutableMap<Int, MutableMap<String, Double>>>()
 
@@ -240,8 +154,53 @@ fun shadowVars(): List<CssVar> {
                 "var(${cssVar("color", "shadow-default")})",
             ).joinToString(" ")
         }
-        CssVar("--lmnd-shadow-$size", layers.joinToString(", "))
+        val value = layers.joinToString(", ")
+        WebToken(CssVar("--lmnd-shadow-$size", value), listOf("shadow", size), jsString(value), null)
     }
+}
+
+private val COLOUR_GROUPS = setOf("bg", "content", "border", "shadow")
+
+/**
+ * `Themed/green-lime/subtle/on-background` -> `color.themed.greenLime.subtle.onBackground`, the KMP
+ * shape. The hue comes from the path, not the CSS name, because a hue can itself contain a hyphen.
+ */
+fun colourJsPath(path: String): List<String> {
+    if (path.startsWith("Themed/")) {
+        return listOf("color", "themed") + path.split('/').drop(1).map(::camelCase)
+    }
+    val leaf = leafOf(path)
+    val group = leaf.substringBefore('-')
+    require(group in COLOUR_GROUPS) { "colour '$path' has no JS group for '$group' — add it to COLOUR_GROUPS" }
+    return listOf("color", group, jsKey(leaf, group))
+}
+
+fun colourValues(theme: String, colours: List<Colour>): List<JsEntry> = colours.map {
+    val path = colourJsPath(it.path)
+    JsEntry(listOf(path[0], theme) + path.drop(1), jsString(rgbaValue(it.r, it.g, it.b, it.a)))
+}
+
+/** Writes web/src/tokens.generated.ts: `tokens` for styling and `tokenValues` for code. */
+fun writeTokensTs(styles: List<JsEntry>, values: List<JsEntry>) {
+    val output = buildString {
+        appendLine("/**")
+        append(defaultAutoGenerationMessage(scriptFilePath = SCRIPT_PATH))
+        appendLine(" */")
+        appendLine()
+        appendLine("/** Style-ready values. Colours are `var()` references and need `tokens.css` loaded. */")
+        appendLine("export const tokens = ${jsObjectLiteral(styles)} as const")
+        appendLine()
+        appendLine("export type LemonadeTokens = typeof tokens")
+        appendLine()
+        appendLine("/** Plain values for code (px numbers, per-theme colours). Style components with `tokens` instead. */")
+        appendLine("export const tokenValues = ${jsObjectLiteral(values)} as const")
+        appendLine()
+        appendLine("export type LemonadeTokenValues = typeof tokenValues")
+    }
+    val target = File("web/src/tokens.generated.ts")
+    target.parentFile.mkdirs()
+    target.writeText(output)
+    println("✓ web/src/tokens.generated.ts written")
 }
 
 fun cssBanner(): String = buildString {
@@ -286,28 +245,24 @@ fun writeTokensCss(sections: List<Pair<String, List<CssVar>>>) {
     println("✓ web/styles/tokens.css written (${sections.sumOf { it.second.size }} properties)")
 }
 
-/** Every semantic colour for one Figma mode, as CSS custom properties. */
-fun themeVars(mode: String): List<CssVar> {
+data class Colour(val path: String, val r: Double, val g: Double, val b: Double, val a: Double) {
+    val cssName: String get() = cssVar("color", colourName(path))
+}
+
+/** Every semantic colour for one Figma mode. */
+fun colours(mode: String): List<Colour> {
     val files = tokenFiles("theme-colors.")
     // Regenerating from a subset would leave the other theme silently stale, and the
     // drift job would stay green because the tree stays clean.
     requireModes(files, "Light", "Dark")
 
-    val vars = mutableListOf<CssVar>()
+    val colours = mutableListOf<Colour>()
     readFileResourceFileByModeRaw(files, mode) { path, resolved ->
-        vars.add(
-            CssVar(
-                name = cssVar("color", colourName(path)),
-                value = rgbValue(
-                    r = resolved.getDouble("r"),
-                    g = resolved.getDouble("g"),
-                    b = resolved.getDouble("b"),
-                    a = resolved.getDouble("a"),
-                ),
-            )
+        colours.add(
+            Colour(path, resolved.getDouble("r"), resolved.getDouble("g"), resolved.getDouble("b"), resolved.getDouble("a"))
         )
     }
-    return vars
+    return colours
 }
 
 /**
@@ -321,12 +276,9 @@ fun themeVars(mode: String): List<CssVar> {
  * `color-scheme` makes native scrollbars, form controls and browser UI follow the
  * theme; without it the page is themed but the scrollbar is glaringly not.
  */
-fun themeSections(): List<Pair<String, List<CssVar>>> {
-    val light = themeVars("Light")
-    val dark = themeVars("Dark")
-    require(light.map { it.name } == dark.map { it.name }) {
-        "light and dark themes declare different colour tokens — one export is stale"
-    }
+fun themeSections(lightColours: List<Colour>, darkColours: List<Colour>): List<Pair<String, List<CssVar>>> {
+    val light = lightColours.map { CssVar(it.cssName, rgbValue(it.r, it.g, it.b, it.a)) }
+    val dark = darkColours.map { CssVar(it.cssName, rgbValue(it.r, it.g, it.b, it.a)) }
     val scheme = { value: String -> CssVar("color-scheme", value) }
     return listOf(
         ":root" to light + scheme("light"),
@@ -339,16 +291,22 @@ fun themeSections(): List<Pair<String, List<CssVar>>> {
 
 fun main() {
     try {
-        val scalars = scalarVars() + typographyVars() + shadowVars()
-        println("✓ Loaded ${scalars.size} theme-neutral tokens")
-        val themes = themeSections()
-        println("✓ Loaded ${themes.first().second.size - 1} colours per theme")
-        val sections = listOf(":root" to scalars) + themes
-        writeTokensCss(sections)
+        val tokens = scalarTokens() + typographyTokens() + shadowTokens()
+        println("✓ Loaded ${tokens.size} theme-neutral tokens")
+        val light = colours("Light")
+        val dark = colours("Dark")
+        require(light.map { it.path } == dark.map { it.path }) {
+            "light and dark themes declare different colour tokens — one export is stale"
+        }
+        println("✓ Loaded ${light.size} colours per theme")
+        writeTokensCss(listOf(":root" to tokens.map { it.css }) + themeSections(light, dark))
 
-        val entries = scalarEntries()
-        writeTokensTs(entries)
-        File("web/tokens.json").writeText(buildJsonFromEntries(entries))
+        val styles = tokens.map { JsEntry(it.path, it.style) } +
+            light.map { JsEntry(colourJsPath(it.path), jsString("var(${it.cssName})")) }
+        val values = tokens.mapNotNull { token -> token.value?.let { JsEntry(token.path, it) } } +
+            colourValues("light", light) + colourValues("dark", dark)
+        writeTokensTs(styles, values)
+        File("web/tokens.json").writeText(jsonObjectLiteral(values) + "\n")
         println("✓ web/tokens.json written")
     } catch (error: Throwable) {
         println("✗ Failed to generate web tokens: ${error.message}")
